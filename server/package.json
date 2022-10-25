@@ -1,0 +1,10 @@
+{
+	"idnttyPublicKey": "4da65116e3b73e52b53c58440759222ccaf3ca3c",
+	"idnttyEndtpoint": "wss://tn-alpha.idntty.org:8090/ws",
+
+	"interface": "wg0",
+	"publicKey": "Tb/2AnrNutX1/6wbHffwRD8vgoRLqNr5P8iYqQzH9SQ=",
+	"publicAddress": "188.225.74.41",
+	"publicPort": "137",
+	"addressRange": {"high":"10.8.0.254", "low":"10.8.0.10"}
+}
