@@ -37,11 +37,15 @@ class IdnttyVPNServer {
     load() {        
         apiClient.createWSClient(this.idnttyEndtpoint).then(async _client => {
             this.idnttyNodeClient = _client;
-            this.updateVPNPeers();
+            await this.updateVPNPeers();            
 
-            this.idnttyNodeClient.subscribe('idnttyvpn:tunnel', (data) => {
-                console.log(data);
-                console.log(this.calculateNextIp());
+            this.idnttyNodeClient.subscribe('idnttyvpn:peeradd', (peer) => {
+
+                let allowedIP = this.calculateNextIp();
+                let addpeerresult = this.addVPNPeer(peer.publicKey, allowedIP.concat("/32"));
+
+                this.idnttyNodeClient.invoke('idnttyvpn:peer', { publicKey : peer.publicKey, ip: allowedIP });
+                console.log("newPeer:", addpeerresult, allowedIP, peer.publicKey);
             });  
             
             this.idnttyNodeClient.subscribe('app:block:new', (data) => { //Ping every 10 blocks
@@ -83,14 +87,18 @@ class IdnttyVPNServer {
         let highIPnumber = this.addressRange.high.split('.').reduce(function(ipInt, octet) { return (ipInt<<8) + parseInt(octet, 10)}, 0) >>> 0;
 
         let peersIP = [];
-        this.peers.forEach((_peer) => {                        
-            let peerIP = _peer.allowedIps.substring(0, _peer.allowedIps.indexOf("/"));
+        this.peers.forEach((_peer) => {            
+            let peerIP = _peer.allowedIps[0].substring(0, _peer.allowedIps[0].indexOf("/"));            
             let peerIPnumber = peerIP.split('.').reduce(function(ipInt, octet) { return (ipInt<<8) + parseInt(octet, 10)}, 0) >>> 0;
-            peersIP.push(peerIPnumber);
+            peersIP.push(peerIPnumber);            
         });
+
+        console.log(peersIP);
 
         for (let newIP = lowIPnumber; newIP < highIPnumber; newIP++) {
             if (!peersIP.includes(newIP)) {
+                console.log(newIP);
+                console.log((newIP>>>24) +'.' + (newIP>>16 & 255) +'.' + (newIP>>8 & 255) +'.' + (newIP & 255));
                 return ( (newIP>>>24) +'.' + (newIP>>16 & 255) +'.' + (newIP>>8 & 255) +'.' + (newIP & 255) );
             }
         }
@@ -98,10 +106,30 @@ class IdnttyVPNServer {
         return null;        
     }
 
+    removeVPNPeer(clientPublicKey) {
+        exec(`sudo wg set ${this.interface} peer ${clientPublicKey} remove`, (error, stdout, stderr) => {
+            if (error) { return false; }
+            if (stderr) { return false; }
+
+            for( var i = 0; i < this.peers.length; i++){ 
+                if ( this.peers[i].publicKey === clientPublicKey) { this.peers.splice(i, 1); }
+            }
+            return true;
+        });
+    }
+
     addVPNPeer(clientPublicKey, allowedIP) {
         exec(`sudo wg set ${this.interface} peer ${clientPublicKey} allowed-ips ${allowedIP}`, (error, stdout, stderr) => {
-            if (error) { return false; }
-            if (stderr) { return false; }            
+            if (error) {
+                console.log("error:", error);
+                return false; }
+            if (stderr) { 
+                console.log("stderr:", stderr);
+                return false; 
+            }
+
+            
+            
             let peer = {
                 publicKey: clientPublicKey,
                 endpoint: null,
@@ -111,6 +139,7 @@ class IdnttyVPNServer {
                 transferTx: null,
             };
             this.peers.push(peer);
+            console.log("addVPNPeer - ok");
             return true;
         });
     }
@@ -131,7 +160,7 @@ class IdnttyVPNServer {
         });
     }
 
-    updateVPNPeers() {
+    async updateVPNPeers() {
         let self = this;
         Wg.show(this.interface).then(async function(_interface) {            
             self.peers = [];
@@ -145,6 +174,7 @@ class IdnttyVPNServer {
                     transferTx: _interface[self.interface]['_peers'][_peer]["_transferTx"],
                 };
                 self.peers.push(peer);
+                console.log(peer);
             });                             
         });
     }
@@ -154,4 +184,7 @@ class IdnttyVPNServer {
 
 let vpn = new IdnttyVPNServer();
 vpn.load();
-setTimeout(function() { vpn.unload() }, 25000);
+let allowedIP = vpn.calculateNextIp();
+let addpeerresult = vpn.addVPNPeer("uDN6Wb4imyX1DBRV1/v+CbuZy9HZbFYIuayNVl/YFF8=", allowedIP.concat("/32"));
+
+//setTimeout(function() { vpn.unload() }, 25000);
