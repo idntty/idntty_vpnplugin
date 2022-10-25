@@ -18,6 +18,7 @@ class IdnttyVPNServer {
     publicAddress = null;
     publicPort = null;
     addressRange = null;
+    vpnHeardbeat = 0;
 
     peers = [];
 
@@ -36,15 +37,19 @@ class IdnttyVPNServer {
     load() {        
         apiClient.createWSClient(this.idnttyEndtpoint).then(async _client => {
             this.idnttyNodeClient = _client;
+            this.updateVPNPeers();
 
             this.idnttyNodeClient.subscribe('idnttyvpn:tunnel', (data) => {
-                console.log(data);                                
+                console.log(data);
+                console.log(this.calculateNextIp());
             });  
             
-            this.idnttyNodeClient.subscribe('app:block:new:tunnel', (data) => {                          
-                _client.invoke('idnttyvpn:servers').then( async _servers => {    
-                    console.log(_servers);        
-                });                
+            this.idnttyNodeClient.subscribe('app:block:new', (data) => { //Ping every 10 blocks
+                this.vpnHeardbeat++;
+                if (this.vpnHeardbeat > 9) {
+                    this.ping();
+                    this.vpnHeardbeat = 0;
+                }                
             }); 
             
         });
@@ -52,6 +57,45 @@ class IdnttyVPNServer {
 
     unload() {        
         this.idnttyNodeClient.disconnect();
+    }
+
+    ping() {
+        const now = Date.now();
+        
+        let peersCount = 0;
+        let totalTransferRx = 0;
+        let totalTransferTx = 0;
+
+        this.peers.forEach((_peer) => {            
+            if ((now - _peer.latestHandshake*1000) < 24*60*60*1000) { peersCount++; } //Count active peers last 24 hours
+            totalTransferRx = totalTransferRx + _peer.transferRx;
+            totalTransferTx = totalTransferTx + _peer.transferTx;
+        });
+
+        this.idnttyNodeClient.invoke('idnttyvpn:servers').then( async _servers => {
+            console.log(peersCount, totalTransferRx, totalTransferTx);
+            console.log(_servers);
+        });   
+    }
+
+    calculateNextIp() {        
+        let lowIPnumber = this.addressRange.low.split('.').reduce(function(ipInt, octet) { return (ipInt<<8) + parseInt(octet, 10)}, 0) >>> 0;
+        let highIPnumber = this.addressRange.high.split('.').reduce(function(ipInt, octet) { return (ipInt<<8) + parseInt(octet, 10)}, 0) >>> 0;
+
+        let peersIP = [];
+        this.peers.forEach((_peer) => {                        
+            let peerIP = _peer.allowedIps.substring(0, _peer.allowedIps.indexOf("/"));
+            let peerIPnumber = peerIP.split('.').reduce(function(ipInt, octet) { return (ipInt<<8) + parseInt(octet, 10)}, 0) >>> 0;
+            peersIP.push(peerIPnumber);
+        });
+
+        for (let newIP = lowIPnumber; newIP < highIPnumber; newIP++) {
+            if (!peersIP.includes(newIP)) {
+                return ( (newIP>>>24) +'.' + (newIP>>16 & 255) +'.' + (newIP>>8 & 255) +'.' + (newIP & 255) );
+            }
+        }
+
+        return null;        
     }
 
     addVPNPeer(clientPublicKey, allowedIP) {
