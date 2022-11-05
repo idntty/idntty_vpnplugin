@@ -1,10 +1,31 @@
 {
-	"idnttyPublicKey": "4da65116e3b73e52b53c58440759222ccaf3ca3c",
-	"idnttyEndtpoint": "wss://tn-alpha.idntty.org:8090/ws",
-
-	"interface": "wg0",
-	"publicKey": "Tb/2AnrNutX1/6wbHffwRD8vgoRLqNr5P8iYqQzH9SQ=",
-	"publicAddress": "188.225.74.41",
-	"publicPort": "137",
-	"addressRange": {"high":"10.8.0.254", "low":"10.8.0.10"}
+	"name": "idntty-vpn",
+	"version": "0.2.0",
+	"description": "Idntty infrastructure for VPN Service",
+	"author": "Idntty Team <hello@idntty.org>",
+	"license": "Apache-2.0",
+	"keywords": [
+		"blockchain",
+		"idntty",
+		"nodejs",
+		"vpn",
+		"wireguard"
+	],
+	"homepage": "https://idntty.org",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/idntty/idntty_vpnplugin.git"
+	},
+	"engines": {
+		"node": ">=16.0.0",
+		"npm": ">=8.0.0"
+	},
+	"dependencies": {
+		"netmask": "1.8.16",
+		"@liskhq/lisk-cryptography": "5.1.12",
+		"@liskhq/lisk-passphrase": "1.15.1",
+		"ts-node": "10.7.0",
+		"typescript": "4.6.4",
+		"sodium-native": "5.1.9"		
+	}
 }
