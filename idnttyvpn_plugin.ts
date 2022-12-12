@@ -50,7 +50,7 @@ export class IdnttyVPNPlugin extends BasePlugin {
         return {
             tunnelAdd: async ( _server: object ) => {              
               const status = await this._tunnelAdd(_server);
-              return {status: status};
+              return {status: status, publicKey: this.idnttyPublicKey};
             },
             tunnelUpdateStatus: async (_server: object) => {
               const status = await this._tunnelUpdateStatus(_server);              
@@ -61,8 +61,8 @@ export class IdnttyVPNPlugin extends BasePlugin {
               return tunnels;
             },
             peerConfirm: async ( peer: object ) => {
-              let tunnels = await this._peerConfirm(peer);
-              return tunnels;
+              await this._peerConfirm(peer);
+              return true;
             },
         };
     }
@@ -85,7 +85,7 @@ export class IdnttyVPNPlugin extends BasePlugin {
         if (this.heardbeat % 13 == 0) {
           this._tunnelCheckStatus();
           this.heardbeat = 0;
-          }
+        }
       });
     }
 
@@ -101,73 +101,72 @@ export class IdnttyVPNPlugin extends BasePlugin {
       const handshake = Date.now();
       const publicKey = tunnel.publicKey;
 
+      let _tunnel = (({ serverAddress, serverPort, serverSubnet, county, region }) => ({ serverAddress, serverPort, serverSubnet, county, region }))(tunnel);
+
+      this._logger.debug(`IDNTTY VPN _tunnelAdd:: ${_tunnel}`);
+
       let x25519_pk = Buffer.alloc(sodium.crypto_box_PUBLICKEYBYTES);
       sodium.crypto_sign_ed25519_pk_to_curve25519(x25519_pk, Buffer.from(publicKey, 'hex'));
 
-      tunnel.publicKey = x25519_pk.toString('Base64');
-      tunnel.state = 1;
+      _tunnel.publicKey = x25519_pk.toString('Base64');
+      _tunnel.state = 1;
 
-      this.db.hSet(DB_HASH_TUNNELS, {[publicKey]: handshake}).then(async () => {
-        this.db.hSet(DB_HASH_TUNNEL.concat("::", publicKey), tunnel).then(async () => {
-          
+      this.db.hSet(DB_HASH_TUNNELS, {[publicKey]: handshake}).then(async () => {        
+        this.db.hSet(DB_HASH_TUNNEL.concat("::", publicKey), _tunnel).then(async () => {
           let peers = await this.db.hGetAll(DB_HASH_PEERS);
           Object.keys(peers).forEach(async (peerPublicKey) => {
             this._peerAddtoTunnel(peerPublicKey, publicKey);
           });
-
           return true;
-        });
+        });        
       });
     }
 
     private async _tunnelUpdateStatus(tunnel: object): Promise<boolean> {
       const handshake = Date.now();
-      const publicKey = tunnel.publicKey;
+      let _tunnel = (({ publicKey, transferRx, transferTx, peers }) => ({ publicKey, transferRx, transferTx, peers }))(tunnel);
 
-      let status = await this.db.hSet(DB_HASH_TUNNELS, {[publicKey]: handshake});
-      //await this.db.hSet(DB_HASH_TUNNEL.concat("::", publicKey), {transferTx: tunnel.transferTx, transferRx: tunnel.transferRx});
-      await this.db.hIncrBy(DB_HASH_TUNNEL.concat("::", publicKey), "transferTx", tunnel.transferTx);
-      await this.db.hIncrBy(DB_HASH_TUNNEL.concat("::", publicKey), "transferRx", tunnel.transferRx);
+      //TODO check if exist
+      let status = await this.db.hSet(DB_HASH_TUNNELS, {[_tunnel.publicKey]: handshake});
+      await this.db.hIncrBy(DB_HASH_TUNNEL.concat("::", _tunnel.publicKey), "transferTx", _tunnel.transferTx);
+      await this.db.hIncrBy(DB_HASH_TUNNEL.concat("::", _tunnel.publicKey), "transferRx", _tunnel.transferRx);
       
-      for await (const tunnelPeer of tunnel.peers) {
-        this.db.hSet(DB_HASH_PEER.concat("::", tunnelPeer.publicKey, "::", tunnel.publicKey), {address:tunnelPeer.address, state: 1});
-        this.db.hIncrBy(DB_HASH_PEER.concat("::", tunnelPeer.publicKey, "::", tunnel.publicKey), "transferTx", tunnelPeer.transferTx);
-        this.db.hIncrBy(DB_HASH_PEER.concat("::", tunnelPeer.publicKey, "::", tunnel.publicKey), "transferRx", tunnelPeer.transferRx);
+      //TODO check if exist
+      for await (const tunnelPeer of _tunnel.peers) {
+        this.db.hSet(DB_HASH_PEER.concat("::", tunnelPeer.publicKey, "::", _tunnel.publicKey), {address:tunnelPeer.address, state: 1});
+        this.db.hIncrBy(DB_HASH_PEER.concat("::", tunnelPeer.publicKey, "::", _tunnel.publicKey), "transferTx", tunnelPeer.transferTx);
+        this.db.hIncrBy(DB_HASH_PEER.concat("::", tunnelPeer.publicKey, "::", _tunnel.publicKey), "transferRx", tunnelPeer.transferRx);
 
         this.db.hSet(DB_HASH_PEERS, {[tunnelPeer.publicKey]: tunnelPeer.latestHandshake});
       }
       
-
-      /*
-      const status = await this.db.hSet(DB_HASH_TUNNELS, {[publicKey]: handshake}).then(async () => {
-        this.db.hSet(DB_HASH_TUNNEL.concat("::", publicKey), {transferTx: tunnel.transferTx, transferRx: tunnel.transferRx}).then(async () => {
-          tunnel.peers.forEach(tunnelPeer => {
-            this.db.hSet(DB_HASH_PEER.concat("::", tunnelPeer.publicKey, "::", tunnel.publicKey), {transferTx:tunnelPeer.transferTx, transferRx:tunnelPeer.transferRx, address:tunnelPeer.address, state: 1});
-            this.db.hSet(DB_HASH_PEERS, {[tunnelPeer.publicKey]: tunnelPeer.latestHandshake});
-          });        
-        });
-      });
-      */
-
       return status === 0 ? true : false;
+    }
+
+    private async _tunnelSuspend(tunnelPublicKey: string): Promise<boolean> {
+      this._logger.debug({ tunnel: tunnelPublicKey }, `IDNTTY VPN tunnel suspended`);
+      this.db.hDel(DB_HASH_TUNNELS, tunnelPublicKey).then(async () => {
+        //TODO check if exist
+        let peers = await this.db.hGetAll(DB_HASH_PEERS);
+        
+        let status = this.db.hSet(DB_HASH_TUNNEL.concat("::", tunnelPublicKey), {state: 0}).then(async () => {
+          Object.keys(peers).forEach(async (peerPublicKey) => {
+            status = this.db.hSet(DB_HASH_PEER.concat("::", peerPublicKey, "::", tunnelPublicKey ), {state: 0});
+          });
+        });
+
+        return status;
+      });
     }
 
     private async _tunnelCheckStatus(): Promise<void> {
       const handshake = Date.now();
-      let tunnels = await this.db.hGetAll(DB_HASH_TUNNELS);
+      let tunnels = await this.db.hGetAll(DB_HASH_TUNNELS);      
       Object.keys(tunnels).forEach(async (tunnelPublicKey) => {
-          let lastHandshake = handshake - tunnels[tunnelPublicKey];
-          this._logger.debug({ heartdeat: lastHandshake }, `IDNTTY VPN :: ${tunnelPublicKey} last handshake:`);
-      });
-    }
-
-    private async _tunnelSuspend(tunnelPublicKey: string): Promise<boolean> {
-      this.db.hdel(DB_HASH_TUNNELS, tunnelPublicKey ).then(async () => {
-        this.db.del(DB_HASH_TUNNEL.concat("::", tunnelPublicKey)).then(async () => {
-          for await (const key of this.db.scanIterator({TYPE: 'hash', MATCH: DB_HASH_PEER.concat("::", "*", "::", tunnelPublicKey)})) {            
-            await this.db.hSet(key, {state:-1});            
+          let lastHandshake = handshake - tunnels[tunnelPublicKey];                    
+          if (lastHandshake > 60*1000) { //15 minutes
+            this._tunnelSuspend(tunnelPublicKey);
           }          
-        });
       });
     }
 
@@ -263,13 +262,16 @@ export class IdnttyVPNPlugin extends BasePlugin {
     }
 
     private async _peerConfirm(peer: object): Promise<void> {
-      let _peer = {
-        state: 1,
-        address: peer.address
+      if (peer.hasOwnProperty('publicKey') && peer.hasOwnProperty('tunnelPublicKey') && peer.hasOwnProperty('address') ) {
+        let _peer = {
+          state: 1,
+          address: peer.address
+        }
+
+        this.db.hSet(DB_HASH_PEER.concat("::", peer.publicKey, "::", peer.tunnelPublicKey), _peer).then(async () => {
+          this._logger.debug({ publicKey: peer.publicKey }, 'IDNTTY VPN :: peer confirmed');
+        });        
       }
-      this.db.hSet(DB_HASH_PEER.concat("::", peer.publicKey, "::", peer.tunnelPublicKey), _peer).then(async () => {
-        this._logger.debug({ publicKey: peer.publicKey }, 'IDNTTY VPN :: peer confirmed');
-      });
     }
 
     private async _peerTunnels(peerPublicKey: string): object[] {      
