@@ -56,7 +56,7 @@ if (!fs.existsSync(settingsPath)) {
         pluginPackage.publicPort = publicPort;
         pluginPackage.county = "Default";
         pluginPackage.region = "Default";
-        pluginPackage.dns = ['1.1.1.1','9.9.9.9'];
+        pluginPackage.dns = ['1.1.1.1','9.9.9.9']
         pluginPackage.clients = [];  
 
         console.log("IDNTTY settings updated at:", settingsPath);
